@@ -52,6 +52,7 @@ func init() {
 		csiPluginTableSchema,
 		scalingPolicyTableSchema,
 		scalingEventTableSchema,
+		eventSinkTableSchema,
 	}...)
 }
 
@@ -897,6 +898,26 @@ func scalingEventTableSchema() *memdb.TableSchema {
 			// 		Field: "Error",
 			// 	},
 			// },
+		},
+	}
+}
+
+func eventSinkTableSchema() *memdb.TableSchema {
+	return &memdb.TableSchema{
+		Name: "event_sink",
+		Indexes: map[string]*memdb.IndexSchema{
+			// Primary index is used for event sink management and simple
+			// direct lookup. ID is required to be unique.
+			"id": {
+				Name:         "id",
+				AllowMissing: false,
+				Unique:       true,
+
+				// Sink ID is uniquely identifying
+				Indexer: &memdb.StringFieldIndex{
+					Field: "ID",
+				},
+			},
 		},
 	}
 }

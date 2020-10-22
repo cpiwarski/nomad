@@ -52,6 +52,7 @@ const (
 	CSIPluginSnapshot
 	CSIVolumeSnapshot
 	ScalingEventsSnapshot
+	EventSinkSnapshot
 )
 
 // LogApplier is the definition of a function that can apply a Raft log
@@ -286,6 +287,10 @@ func (n *nomadFSM) Apply(log *raft.Log) interface{} {
 		return n.applyCSIVolumeBatchClaim(buf[1:], log.Index)
 	case structs.CSIPluginDeleteRequestType:
 		return n.applyCSIPluginDelete(buf[1:], log.Index)
+	case structs.EventSinkUpsertRequestType:
+		return n.applyUpsertEventSink(buf[1:], log.Index)
+	case structs.EventSinkDeleteRequestType:
+		return n.applyDeleteEventSink(buf[1:], log.Index)
 	}
 
 	// Check enterprise only message types.
@@ -1248,6 +1253,36 @@ func (n *nomadFSM) applyCSIPluginDelete(buf []byte, index uint64) interface{} {
 	return nil
 }
 
+func (n *nomadFSM) applyUpsertEventSink(buf []byte, index uint64) interface{} {
+	var req structs.EventSinkUpsertRequest
+	if err := structs.Decode(buf, &req); err != nil {
+		panic(fmt.Errorf("failed to decode request: %v", err))
+	}
+	defer metrics.MeasureSince([]string{"nomad", "fsm", "apply_upsert_event_sink"}, time.Now())
+
+	if err := n.state.UpsertEventSink(index, req.Sink); err != nil {
+		n.logger.Error("UpsertEventSink failed", "error", err)
+		return err
+	}
+
+	return nil
+}
+
+func (n *nomadFSM) applyDeleteEventSink(buf []byte, index uint64) interface{} {
+	var req structs.EventSinkDeleteRequest
+	if err := structs.Decode(buf, &req); err != nil {
+		panic(fmt.Errorf("failed to decode request: %v", err))
+	}
+	defer metrics.MeasureSince([]string{"nomad", "fsm", "apply_delete_event_sink"}, time.Now())
+
+	if err := n.state.DeleteEventSinks(index, req.IDs); err != nil {
+		n.logger.Error("DeleteEventSink failed", "error", err)
+		return err
+	}
+
+	return nil
+}
+
 func (n *nomadFSM) Snapshot() (raft.FSMSnapshot, error) {
 	// Create a new snapshot
 	snap, err := n.state.Snapshot()
@@ -1512,6 +1547,15 @@ func (n *nomadFSM) Restore(old io.ReadCloser) error {
 			}
 
 			if err := restore.CSIVolumeRestore(plugin); err != nil {
+				return err
+			}
+		case EventSinkSnapshot:
+			sink := new(structs.EventSink)
+			if err := dec.Decode(sink); err != nil {
+				return err
+			}
+
+			if err := restore.EventSinkRestore(sink); err != nil {
 				return err
 			}
 		default:
@@ -1825,6 +1869,10 @@ func (s *nomadSnapshot) Persist(sink raft.SnapshotSink) error {
 		return err
 	}
 	if err := s.persistClusterMetadata(sink, encoder); err != nil {
+		sink.Cancel()
+		return err
+	}
+	if err := s.persistEventSinks(sink, encoder); err != nil {
 		sink.Cancel()
 		return err
 	}
@@ -2325,6 +2373,29 @@ func (s *nomadSnapshot) persistCSIVolumes(sink raft.SnapshotSink,
 		// Write out a volume snapshot
 		sink.Write([]byte{byte(CSIVolumeSnapshot)})
 		if err := encoder.Encode(volume); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *nomadSnapshot) persistEventSinks(sink raft.SnapshotSink,
+	encoder *codec.Encoder) error {
+
+	sinks, err := s.snap.EventSinks(nil)
+	if err != nil {
+		return err
+	}
+
+	for {
+		raw := sinks.Next()
+		if raw == nil {
+			break
+		}
+
+		es := raw.(*structs.EventSink)
+		sink.Write([]byte{byte(EventSinkSnapshot)})
+		if err := encoder.Encode(es); err != nil {
 			return err
 		}
 	}
