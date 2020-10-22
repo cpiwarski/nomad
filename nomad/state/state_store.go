@@ -5667,6 +5667,10 @@ func (s *StateStore) ScalingPolicyByTargetAndType(ws memdb.WatchSet, target map[
 	return nil, nil
 }
 
+func (s *StateStore) UpsertEventSink(index uint64, sink structs.EventSink) error {
+	return nil
+}
+
 // LatestEventsReverse returns the unfiltered list of all volumes
 func (s *StateStore) LatestEventsReverse(ws memdb.WatchSet) (memdb.ResultIterator, error) {
 	txn := s.db.ReadTxn()
